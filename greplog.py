@@ -10,7 +10,7 @@ import json
 import re
 import sys
 import urlparse
-
+import subprocess
 
 # Or I could rewrite the script for Python 3 which has enums
 def enum(*sequential, **named):
@@ -61,6 +61,9 @@ class Part(object):
     def __len__(self):
         return len(self.content)
 
+    def __iter__(self):
+        return self.content.__iter__()
+
 class RequestHeaders(Part):
     data = None
     QS = re.compile("(GET|POST|PUT) ([^\s\?]+)(\??(\S*)) .*")
@@ -102,7 +105,7 @@ class Ignore(Part):
         pass
 
 class Message():
-    def __init__(self, line_count, args):
+    def __init__(self, line_count, filename, args):
         self.line_count = line_count
         self.parts = dict()
         self.parts[LogParts.STARTED] = Ignore()
@@ -111,6 +114,7 @@ class Message():
         self.parts[LogParts.IGNORE] = Ignore()
         self.parts[LogParts.STOPPED] = Ignore()
         self.parts[None] = Ignore()
+        self.filename = filename
 
         self.include_headers = args.with_headers
         self.exclude_headers = args.without_headers
@@ -118,6 +122,7 @@ class Message():
         self.exclude_parameters = args.without_parameters
         self.show_headers = args.show_headers
         self.lineno = args.n
+        self.show_filename = args.show_filename
 
     def method(self):
         return self.parts[LogParts.REQUEST_HEADERS].method()
@@ -155,7 +160,15 @@ class Message():
         # Add query parameters to content
         self.parts[LogParts.CONTENT].extend(self.parts[LogParts.REQUEST_HEADERS].parameters)
         if self.show():
-            print self
+            yield ("%s%s%s" % (
+                "%s " % self.filename if self.show_filename else "",
+                "%d: " % self.line_count if self.lineno else "",
+                self.parts[LogParts.REQUEST_HEADERS])
+            ).strip()
+            for x in iter(self.parts[LogParts.CONTENT]):
+                yield x.strip()
+            yield "---"
+
 
 class GrepLog():
     DELIMITER_PATTERN = re.compile("--(\w+)-(\w)--")
@@ -163,12 +176,12 @@ class GrepLog():
     def __init__(self, args):
         self.args = args
         self.state = None
-        self.message = Message(0, args)
+        self.message = Message(0, "", args)
 
-    def parseState(self, result, line_count):
+    def parseState(self, result, line_count, filename):
         logPart = result.group(2)
         if logPart == 'A':
-            self.message = Message(line_count, self.args)
+            self.message = Message(line_count, filename, self.args)
             self.state = LogParts.STARTED
         elif logPart == 'B':
             self.state = LogParts.REQUEST_HEADERS
@@ -179,17 +192,19 @@ class GrepLog():
         else:
             self.state = LogParts.IGNORE
 
-    def parseLine(self, line, line_count):
+    def parseLine(self, line, line_count, filename):
         """ Parse log line, handle depending on current state """
         result = self.DELIMITER_PATTERN.match(line)
         if result:
-            self.parseState(result, line_count)
+            self.parseState(result, line_count, filename)
         elif line:
             self.message.add(self.state, line, line_count)
 
         if self.state == LogParts.STOPPED:
-            self.message.handle()
+            for x in self.message.handle():
+                yield x
             self.state = LogParts.IGNORE
+
 
 def main(args):
     parser = argparse.ArgumentParser(description = 'Parse mod_security logs')
@@ -215,12 +230,28 @@ def main(args):
     parser.add_argument('-n',
         help='Display line number',
         action='store_true')
+    parser.add_argument('--show_filename',
+        help='Display file name',
+        action='store_true')
     parser.add_argument('file', nargs='+')
 
     args = parser.parse_args(args)
+
     greplog = GrepLog(args)
-    for line in fileinput.input(args.file):
-        greplog.parseLine(line, fileinput.filelineno())
+    p = subprocess.Popen(['less', '-F', '-R', '-S', '-X', '-K'],
+                          stdin=subprocess.PIPE,
+                          stdout=sys.stdout)
+    try:
+        for line in fileinput.input(args.file):
+            for x in greplog.parseLine(line, fileinput.filelineno(), fileinput.filename()):
+                p.stdin.write("%s\n" % x)
+        p.stdin.close()
+        p.wait()
+    except (KeyboardInterrupt, IOError):
+        pass
+
+    #pager.page(parse(args))
+
 
 if __name__ == '__main__':
     main(sys.argv[1:])
