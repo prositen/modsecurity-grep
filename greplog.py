@@ -37,6 +37,7 @@ class Part(object):
     def add(self, line, line_count):
         if not self.content:
             self.line_count =  line_count
+        self.content.append(line)
 
     def addParameter(self, line, line_count):
         parameters = ['%s=%s' % (key,item[0]) for key,item in urlparse.parse_qs(line).iteritems()]
@@ -66,6 +67,7 @@ class RequestHeaders(Part):
     request_url = ""
 
     def add(self, line, line_count):
+        Part.add(self, line, line_count)
         result = re.match(self.QS, line)
         if result:
             if line.startswith('GET'):
@@ -76,29 +78,24 @@ class RequestHeaders(Part):
                 self._method = Methods.PUT
             self.parameters = [ '%s=%s' % (key,item[0]) for key,item in urlparse.parse_qs(result.group(4)).iteritems()]
             self.request_url = '%s %s\n' % (result.group(1), result.group(2))
-        Part.add(self, line, line_count)
 
-    def parameter_matches(self, regex):
-        return re.search(regex, self.request_url)
+    def show(self, regex):
+        return ""
 
     def __str__(self):
-        if self.request_url:
-            return str(self.request_url)
-        else:
-            return ""
+        return str(self.request_url)
 
     def method(self):
         return self._method
 
 class Content(Part):
-
     def add(self, line, line_count):
+        Part.add(self, line, line_count)
         try:
             self.addJson(line, line_count)
         except ValueError:
             self.addParameter(line, line_count)
 
-        Part.add(self, line, line_count)
 
 class Ignore(Part):
     def add(self, line, line_count):
@@ -113,8 +110,8 @@ class Message():
         self.parts[LogParts.CONTENT] =  Content()
         self.parts[LogParts.IGNORE] = Ignore()
         self.parts[LogParts.STOPPED] = Ignore()
-
         self.parts[None] = Ignore()
+
         self.include_headers = args.with_headers
         self.exclude_headers = args.without_headers
         self.include_parameters = args.with_parameters
@@ -131,9 +128,10 @@ class Message():
             self.parts[state].add(line, line_count)
 
     def __str__(self):
-        return ("%s%s%s---" % (
+        return ("%s%s%s%s---" % (
             "%d: " % self.line_count if self.lineno else "",
             str(self.parts[LogParts.REQUEST_HEADERS]),
+            self.parts[LogParts.REQUEST_HEADERS].show(self.show_headers),
             str(self.parts[LogParts.CONTENT])))
 
     def show(self):
