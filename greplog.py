@@ -184,9 +184,40 @@ class GrepLog():
     DELIMITER_PATTERN = re.compile("--(\w+)-(\w)--")
 
     def __init__(self, args):
-        self.args = args
+        self.args = self.get_arg_parser().parse_args(args)
         self.state = None
         self.message = Message(0, args)
+
+    @staticmethod
+    def get_arg_parser():
+        parser = argparse.ArgumentParser(description='Parse mod_security logs')
+        parser.add_argument('--with_headers',
+                            help='Show only logs where request headers match HEADER',
+                            metavar='HEADER',
+                            nargs='+')
+        parser.add_argument('--without_headers',
+                            help='Don\'t show logs where request headers match HEADER. '
+                                 + 'Overrides --with_headers on conflicts',
+                            metavar='HEADER',
+                            nargs='+')
+        parser.add_argument('--with_parameters',
+                            help='Show only logs where URL parameters (GET, POST or PUT) match PARAM',
+                            metavar='PARAM',
+                            nargs='+')
+        parser.add_argument('--without_parameters',
+                            help='Don\'t show logs where URL parameters match PARAM. '
+                                 + 'Overrides --with_parameters on conflicts',
+                            metavar='PARAM',
+                            nargs='+')
+        parser.add_argument('--show_headers',
+                            help='Display request headers SHOW_HEADERS. '
+                                 + 'Normally only the GET/POST/PUT string is displayed',
+                            nargs='+')
+        parser.add_argument('-n',
+                            help='Display line number',
+                            action='store_true')
+        parser.add_argument('file', nargs='+')
+        return parser
 
     def parse_state(self, result, line_count):
         log_part = result.group(2)
@@ -224,42 +255,13 @@ def header(filename):
 
 
 def main(args):
-    parser = argparse.ArgumentParser(description='Parse mod_security logs')
-    parser.add_argument('--with_headers',
-                        help='Show only logs where request headers match HEADER',
-                        metavar='HEADER',
-                        nargs='+')
-    parser.add_argument('--without_headers',
-                        help='Don\'t show logs where request headers match HEADER. '
-                             + 'Overrides --with_headers on conflicts',
-                        metavar='HEADER',
-                        nargs='+')
-    parser.add_argument('--with_parameters',
-                        help='Show only logs where URL parameters (GET, POST or PUT) match PARAM',
-                        metavar='PARAM',
-                        nargs='+')
-    parser.add_argument('--without_parameters',
-                        help='Don\'t show logs where URL parameters match PARAM. '
-                             + 'Overrides --with_parameters on conflicts',
-                        metavar='PARAM',
-                        nargs='+')
-    parser.add_argument('--show_headers',
-                        help='Display request headers SHOW_HEADERS. Normally only the GET/POST/PUT string is displayed',
-                        nargs='+')
-    parser.add_argument('-n',
-                        help='Display line number',
-                        action='store_true')
-    parser.add_argument('file', nargs='+')
-
-    args = parser.parse_args(args)
-
     greplog = GrepLog(args)
     p = subprocess.Popen(['less', '-F', '-R', '-S', '-X', '-K'],
                          stdin=subprocess.PIPE,
                          stdout=sys.stdout)
     filename = None
     try:
-        for line in fileinput.input(args.file):
+        for line in fileinput.input(greplog.args.file):
             if filename != fileinput.filename():
                 filename = fileinput.filename()
                 p.stdin.write(header(filename))
