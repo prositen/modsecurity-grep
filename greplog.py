@@ -11,29 +11,27 @@ import re
 import subprocess
 import sys
 import urlparse
-
-
+from enum import Enum
 try:
     from termcolor import colored
 except ImportError:
-    def colored(text, args, **kwargs):
+    # noinspection PyUnusedLocal
+    def colored(text, *args, **kwargs):
         return text
 
 
-# Or I could rewrite the script for Python 3 which has enums
-def enum(*sequential, **named):
-    enums = dict(zip(sequential, range(len(sequential))), **named)
-    reverse = dict((value, key) for key, value in enums.iteritems())
-    enums['reverse_mapping'] = reverse
-    return type('Enum', (), enums)
+class LogParts(Enum):
+    STARTED = 1
+    REQUEST_HEADERS = 2
+    CONTENT = 3
+    IGNORE = 4
+    STOPPED = 5
 
-LogParts = enum('STARTED',
-                'REQUEST_HEADERS',
-                'CONTENT',
-                'IGNORE',
-                'STOPPED')
 
-Methods = enum('GET', 'POST', 'PUT')
+class Methods(Enum):
+    GET = 1
+    POST = 2
+    PUT = 3
 
 
 class Part(object):
@@ -45,17 +43,17 @@ class Part(object):
 
     def add(self, line, line_count):
         if not self.content:
-            self.line_count =  line_count
+            self.line_count = line_count
         self.content.append(line)
 
-    def add_parameter(self, line, line_count):
-        parameters = ['%s=%s' % (key,item[0]) for key,item in urlparse.parse_qs(line).iteritems()]
+    def add_parameter(self, line):
+        parameters = ['%s=%s' % (key, item[0]) for key, item in urlparse.parse_qs(line).iteritems()]
         if parameters:
             self.content.extend(parameters)
 
-    def add_json(self, line, line_count):
+    def add_json(self, line):
         parameters = json.loads(line)
-        for k,v in parameters.iteritems():
+        for k, v in parameters.iteritems():
             self.content.append('%s=%s' % (k, json.dumps(v)))
 
     def extend(self, content):
@@ -96,11 +94,13 @@ class RequestHeaders(Part):
                 self._method = Methods.POST
             elif line.startswith('PUT'):
                 self._method = Methods.PUT
-            self.parameters = [ '%s=%s' % (key,item[0]) for key,item in urlparse.parse_qs(result.group(4)).iteritems()]
-            self.request_url = '%s %s\n' % (result.group(1), result.group(2))
+            self.parameters = ['%s=%s' % (key, item[0]) for key, item in urlparse.parse_qs(result.group(4)).iteritems()]
+            self.request_url = result
 
     def __str__(self):
-        return str(self.request_url)
+        return '%s %s%s\n' % (colored(self.request_url.group(1), 'yellow'),
+                              colored(self.request_url.group(2), 'cyan'),
+                              colored("?%s" % self.request_url.group(4), 'yellow') if self.request_url.group(4) else "")
 
     def method(self):
         return self._method
@@ -110,9 +110,9 @@ class Content(Part):
     def add(self, line, line_count):
         Part.add(self, line, line_count)
         try:
-            self.add_json(line, line_count)
+            self.add_json(line)
         except ValueError:
-            self.add_parameter(line, line_count)
+            self.add_parameter(line)
 
 
 class Ignore(Part):
@@ -127,7 +127,7 @@ class Message():
         self.parts = dict()
         self.parts[LogParts.STARTED] = Ignore()
         self.parts[LogParts.REQUEST_HEADERS] = RequestHeaders()
-        self.parts[LogParts.CONTENT] =  Content()
+        self.parts[LogParts.CONTENT] = Content()
         self.parts[LogParts.IGNORE] = Ignore()
         self.parts[LogParts.STOPPED] = Ignore()
         self.parts[None] = Ignore()
@@ -139,19 +139,12 @@ class Message():
         if line:
             self.parts[state].add(line, line_count)
 
-    def __str__(self):
-        return ("%s%s%s%s---" % (
-            "%d: " % self.line_count if self.lineno else "",
-            str(self.parts[LogParts.REQUEST_HEADERS]),
-            self.parts[LogParts.REQUEST_HEADERS].show(self.show_headers),
-            str(self.parts[LogParts.CONTENT])))
-
     def show(self):
         if self.args.with_headers:
-            if not any([self.parts[LogParts.REQUEST_HEADERS].matches(header) for header in self.args.with_headers]):
+            if not any([self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.with_headers]):
                 return False
         if self.args.without_headers:
-            if any([self.parts[LogParts.REQUEST_HEADERS].matches(header) for header in self.args.without_headers]):
+            if any([self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.without_headers]):
                 return False
 
         if self.args.with_parameters:
@@ -167,7 +160,7 @@ class Message():
         return ("%s%s" % (
                 colored("%d: " % self.line_count, 'yellow', attrs=['bold']) if self.args.n else "",
                 self.parts[LogParts.REQUEST_HEADERS])
-            ).strip()
+                ).strip()
 
     def content(self):
         for x in iter(self.parts[LogParts.CONTENT]):
@@ -196,15 +189,15 @@ class GrepLog():
         self.message = Message(0, args)
 
     def parse_state(self, result, line_count):
-        logPart = result.group(2)
-        if logPart == 'A':
+        log_part = result.group(2)
+        if log_part == 'A':
             self.message = Message(line_count, self.args)
             self.state = LogParts.STARTED
-        elif logPart == 'B':
+        elif log_part == 'B':
             self.state = LogParts.REQUEST_HEADERS
-        elif logPart == 'C' or logPart == 'I':
+        elif log_part == 'C' or log_part == 'I':
             self.state = LogParts.CONTENT
-        elif logPart == 'Z':
+        elif log_part == 'Z':
             self.state = LogParts.STOPPED
         else:
             self.state = LogParts.IGNORE
@@ -226,12 +219,12 @@ class GrepLog():
 
 def header(filename):
     l = len(filename)
-    return "%s\n%s\n" % ( colored(filename, 'green', attrs = ['bold']),
-                          colored(l * '=', 'green', attrs = ['bold']) )
+    return "%s\n%s\n" % (colored(filename, 'green', attrs=['bold']),
+                         colored(l * '=', 'green', attrs=['bold']))
 
 
 def main(args):
-    parser = argparse.ArgumentParser(description = 'Parse mod_security logs')
+    parser = argparse.ArgumentParser(description='Parse mod_security logs')
     parser.add_argument('--with_headers',
                         help='Show only logs where request headers match HEADER',
                         metavar='HEADER',
