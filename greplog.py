@@ -44,7 +44,7 @@ class Part(object):
     def add(self, line, line_count):
         if not self.content:
             self.line_count = line_count
-        self.content.append(line)
+        self.content.append(colored(line, 'yellow'))
 
     def add_parameter(self, line):
         parameters = ['%s=%s' % (key, item[0]) for key, item in urlparse.parse_qs(line).iteritems()]
