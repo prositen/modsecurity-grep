@@ -8,9 +8,11 @@ import argparse
 import fileinput
 import json
 import re
-import sys
-import urlparse
 import subprocess
+import sys
+from termcolor import colored
+import urlparse
+
 
 # Or I could rewrite the script for Python 3 which has enums
 def enum(*sequential, **named):
@@ -105,7 +107,7 @@ class Ignore(Part):
         pass
 
 class Message():
-    def __init__(self, line_count, filename, args):
+    def __init__(self, line_count, args):
         self.line_count = line_count
         self.parts = dict()
         self.parts[LogParts.STARTED] = Ignore()
@@ -114,7 +116,6 @@ class Message():
         self.parts[LogParts.IGNORE] = Ignore()
         self.parts[LogParts.STOPPED] = Ignore()
         self.parts[None] = Ignore()
-        self.filename = filename
 
         self.include_headers = args.with_headers
         self.exclude_headers = args.without_headers
@@ -122,7 +123,6 @@ class Message():
         self.exclude_parameters = args.without_parameters
         self.show_headers = args.show_headers
         self.lineno = args.n
-        self.show_filename = args.show_filename
 
     def method(self):
         return self.parts[LogParts.REQUEST_HEADERS].method()
@@ -160,9 +160,8 @@ class Message():
         # Add query parameters to content
         self.parts[LogParts.CONTENT].extend(self.parts[LogParts.REQUEST_HEADERS].parameters)
         if self.show():
-            yield ("%s%s%s" % (
-                "%s " % self.filename if self.show_filename else "",
-                "%d: " % self.line_count if self.lineno else "",
+            yield ("%s%s" % (
+                colored("%d: " % self.line_count, 'yellow', attrs=['bold']) if self.lineno else "",
                 self.parts[LogParts.REQUEST_HEADERS])
             ).strip()
             for x in iter(self.parts[LogParts.CONTENT]):
@@ -176,12 +175,12 @@ class GrepLog():
     def __init__(self, args):
         self.args = args
         self.state = None
-        self.message = Message(0, "", args)
+        self.message = Message(0, args)
 
-    def parseState(self, result, line_count, filename):
+    def parseState(self, result, line_count):
         logPart = result.group(2)
         if logPart == 'A':
-            self.message = Message(line_count, filename, self.args)
+            self.message = Message(line_count, self.args)
             self.state = LogParts.STARTED
         elif logPart == 'B':
             self.state = LogParts.REQUEST_HEADERS
@@ -192,11 +191,12 @@ class GrepLog():
         else:
             self.state = LogParts.IGNORE
 
-    def parseLine(self, line, line_count, filename):
+    def parseLine(self, line, line_count):
         """ Parse log line, handle depending on current state """
         result = self.DELIMITER_PATTERN.match(line)
+
         if result:
-            self.parseState(result, line_count, filename)
+            self.parseState(result, line_count)
         elif line:
             self.message.add(self.state, line, line_count)
 
@@ -204,6 +204,12 @@ class GrepLog():
             for x in self.message.handle():
                 yield x
             self.state = LogParts.IGNORE
+
+
+def header(filename):
+    l = len(filename)
+    return "%s\n%s\n" % ( colored(filename, 'green', attrs = ['bold']),
+                          colored(l * '=', 'green', attrs = ['bold']) )
 
 
 def main(args):
@@ -230,9 +236,6 @@ def main(args):
     parser.add_argument('-n',
         help='Display line number',
         action='store_true')
-    parser.add_argument('--show_filename',
-        help='Display file name',
-        action='store_true')
     parser.add_argument('file', nargs='+')
 
     args = parser.parse_args(args)
@@ -241,9 +244,13 @@ def main(args):
     p = subprocess.Popen(['less', '-F', '-R', '-S', '-X', '-K'],
                           stdin=subprocess.PIPE,
                           stdout=sys.stdout)
+    filename = None
     try:
         for line in fileinput.input(args.file):
-            for x in greplog.parseLine(line, fileinput.filelineno(), fileinput.filename()):
+            if filename != fileinput.filename():
+                filename = fileinput.filename()
+                p.stdin.write(header(filename))
+            for x in greplog.parseLine(line, fileinput.filelineno()):
                 p.stdin.write("%s\n" % x)
         p.stdin.close()
         p.wait()
