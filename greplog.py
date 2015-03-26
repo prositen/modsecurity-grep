@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import urlparse
+from collections import defaultdict
 from enum import Enum
 try:
     from termcolor import colored
@@ -33,43 +34,82 @@ class Methods(Enum):
     POST = 2
     PUT = 3
 
+    def __str__(self):
+        return self.name
+
+
+class Parameters(object):
+
+    def __init__(self):
+        self.param = defaultdict(list)
+
+    def add(self, key, value):
+        self.param[key].extend(value)
+
+    def update(self, params):
+        try:
+            self.param.update(params.param)
+        except AttributeError:
+            self.param.update(params)
+
+    def __iter__(self):
+        for k, v in self.param.iteritems():
+            yield colored(k, 'red', attrs=['bold']) + '=' + colored(v, 'green')
+
+    def iteritems(self):
+        return self.param.iteritems()
+
+    def len(self):
+        return len(self.param)
+
+    def matches(self, regex_name, regex_value):
+        for k, v in self.param.iteritems():
+            if re.search(regex_name, k):
+                if regex_value:
+                    if any(re.search(regex_value, value) for value in v):
+                        return True
+                else:
+                    return True
+        return False
+
 
 class Part(object):
     """ Base class for mod_security log parts """
     def __init__(self):
-        self.content = []
+        self.raw_data = []
         self.line_count = 0
-        self.parameters = []
+        self.parameters = Parameters()
 
     def add(self, line, line_count):
-        if not self.content:
+        if not self.raw_data:
             self.line_count = line_count
-        self.content.append(colored(line, 'yellow'))
+        self.raw_data.append(line)
 
     def add_parameter(self, line):
-        parameters = ['%s=%s' % (key, item[0]) for key, item in urlparse.parse_qs(line).iteritems()]
-        if parameters:
-            self.content.extend(parameters)
+        for k, v in urlparse.parse_qs(line).iteritems():
+            self.parameters.add(k, v)
 
     def add_json(self, line):
         parameters = json.loads(line)
-        for k, v in parameters.iteritems():
-            self.content.append('%s=%s' % (k, json.dumps(v)))
+        self.parameters.update(parameters)
+
+    def get_parameters(self):
+        return self.parameters
 
     def extend(self, content):
-        self.content.extend(content)
+        self.raw_data.extend(content)
 
     def matches(self, regex):
-        return any([re.search(regex, line) for line in self.content])
+        return any([re.search(regex, line) for line in self.raw_data])
 
     def __str__(self):
-        return "\n".join(self.content) + "\n"
+        return "\n".join(self.raw_data)
 
     def __len__(self):
-        return len(self.content)
+        return len(self.raw_data)
 
     def __iter__(self):
-        return self.content.__iter__()
+        return self.raw_data.__iter__()
 
 
 class RequestHeaders(Part):
@@ -84,6 +124,12 @@ class RequestHeaders(Part):
         self._method = None
         self.request_url = ""
 
+    def __str__(self):
+        return '{method:s} {url:s}{query_parameters:s}'.format(method=colored(self.request_url[0], 'yellow'),
+                                                               url=colored(self.request_url[1], 'cyan'),
+                                                               query_parameters=colored('?%s' % self.request_url[2],
+                                                                                        'yellow') if self.request_url[2] else "")
+
     def add(self, line, line_count):
         Part.add(self, line, line_count)
         result = re.match(self.QS, line)
@@ -94,15 +140,10 @@ class RequestHeaders(Part):
                 self._method = Methods.POST
             elif line.startswith('PUT'):
                 self._method = Methods.PUT
-            self.parameters = ['%s=%s' % (key, item[0]) for key, item in urlparse.parse_qs(result.group(4)).iteritems()]
-            self.request_url = result
+            self.parameters.update(urlparse.parse_qs(result.group(4)).iteritems())
+            self.request_url = (result.group(1), result.group(2), result.group(4))
 
-    def __str__(self):
-        return '%s %s%s\n' % (colored(self.request_url.group(1), 'yellow'),
-                              colored(self.request_url.group(2), 'cyan'),
-                              colored("?%s" % self.request_url.group(4), 'yellow') if self.request_url.group(4) else "")
-
-    def method(self):
+    def get_method(self):
         return self._method
 
 
@@ -133,7 +174,7 @@ class Message():
         self.parts[None] = Ignore()
 
     def method(self):
-        return self.parts[LogParts.REQUEST_HEADERS].method()
+        return self.parts[LogParts.REQUEST_HEADERS].get_method()
 
     def add(self, state, line, line_count):
         if line:
@@ -147,36 +188,69 @@ class Message():
             if any([self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.without_headers]):
                 return False
 
-        if self.args.with_parameters:
-            if not any([self.parts[LogParts.CONTENT].matches(param) for param in self.args.with_parameters]):
+        if self.args.with_method:
+            if not any([str(self.method()) == m for m in self.args.with_method]):
                 return False
+        if self.args.with_parameters:
+            for param in self.args.with_parameters:
+                try:
+                    key, value = param.split('=', 2)
+                except ValueError:
+                    key = param
+                    value = None
+                if not self.parts[LogParts.CONTENT].get_parameters().matches(key, value):
+                    return False
         if self.args.without_parameters:
             if any([self.parts[LogParts.CONTENT].matches(param) for param in self.args.without_parameters]):
                 return False
 
         return True
 
-    def request_headers(self):
-        return ("%s%s" % (
-                colored("%d: " % self.line_count, 'yellow', attrs=['bold']) if self.args.n else "",
-                self.parts[LogParts.REQUEST_HEADERS])
-                ).strip()
+    def request_url(self):
+        """
+        Colorized string representation of the request URL
+        """
+        return "%s%s" % (
+            colored("%d: " % self.line_count, 'yellow', attrs=['bold']) if self.args.n else "",
+            self.parts[LogParts.REQUEST_HEADERS]
+            )
+
+    def headers(self):
+        if self.args.show_headers:
+            for x in iter(self.parts[LogParts.REQUEST_HEADERS]):
+                if any([re.search(regexp, x) for regexp in self.args.show_headers]):
+                    yield x
+
+    def parameters(self):
+        for x in self.parts[LogParts.CONTENT].get_parameters():
+            yield colored(x, 'red')
 
     def content(self):
         for x in iter(self.parts[LogParts.CONTENT]):
-            yield x.strip()
+            yield x
 
     @staticmethod
     def footer():
         return '---'
 
     def handle(self):
-        # Add query parameters to content
-        self.parts[LogParts.CONTENT].extend(self.parts[LogParts.REQUEST_HEADERS].parameters)
+        """
+        Show the message if the filters match.
+        Yields output, one line at a time
+        """
+
+        self.parts[LogParts.CONTENT].get_parameters().update(self.parts[LogParts.REQUEST_HEADERS].get_parameters())
+
         if self.show():
-            yield self.request_headers()
-            for x in self.content():
+            yield self.request_url()
+            for x in self.headers():
                 yield x
+            if self.args.show_raw_content:
+                for x in self.content():
+                    yield x
+            for x in self.parameters():
+                yield x
+
             yield self.footer()
 
 
@@ -210,13 +284,21 @@ class GrepLog():
                             metavar='PARAM',
                             nargs='+')
         parser.add_argument('--show_headers',
-                            help='Display request headers SHOW_HEADERS. '
+                            help='Show request headers SHOW_HEADERS. '
                                  + 'Normally only the GET/POST/PUT string is displayed',
                             nargs='+')
         parser.add_argument('-n',
-                            help='Display line number',
+                            help='Show line number',
                             action='store_true')
-        parser.add_argument('file', nargs='+')
+        parser.add_argument('--show_raw_content',
+                            help='Show raw content. Normally only parsed post-data is displayed.',
+                            action='store_true')
+        parser.add_argument('--with_method',
+                            help='Show only logs where request method is METHOD',
+                            metavar='METHOD',
+                            nargs='+')
+        parser.add_argument('file', help='Logfile(s)',
+                            nargs='+')
         return parser
 
     def parse_state(self, result, line_count):
@@ -234,7 +316,12 @@ class GrepLog():
             self.state = LogParts.IGNORE
 
     def parse_line(self, line, line_count):
-        """ Parse log line, handle depending on current state """
+        """
+        Parse log line, handle depending on current state.
+
+        yields output, one line at a time.
+        """
+
         result = self.DELIMITER_PATTERN.match(line)
 
         if result:
@@ -248,14 +335,21 @@ class GrepLog():
             self.state = LogParts.IGNORE
 
 
-def header(filename):
-    l = len(filename)
-    return "%s\n%s\n" % (colored(filename, 'green', attrs=['bold']),
+def header(header_text):
+    """
+    Generate a colorized header with nice underline
+    :param header_text:
+    :return: string
+    """
+    l = len(header_text)
+    return "%s\n%s\n" % (colored(header_text, 'green', attrs=['bold']),
                          colored(l * '=', 'green', attrs=['bold']))
 
 
 def main(args):
     greplog = GrepLog(args)
+
+    # Pipe output through less. Hackish, but better than writing my own pager.
     p = subprocess.Popen(['less', '-F', '-R', '-S', '-X', '-K'],
                          stdin=subprocess.PIPE,
                          stdout=sys.stdout)
@@ -265,7 +359,7 @@ def main(args):
             if filename != fileinput.filename():
                 filename = fileinput.filename()
                 p.stdin.write(header(filename))
-            for x in greplog.parse_line(line, fileinput.filelineno()):
+            for x in greplog.parse_line(line.strip(), fileinput.filelineno()):
                 p.stdin.write("%s\n" % x)
         p.stdin.close()
         p.wait()
