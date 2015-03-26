@@ -265,35 +265,35 @@ class GrepLog():
     @staticmethod
     def get_arg_parser():
         parser = argparse.ArgumentParser(description='Parse mod_security logs')
-        parser.add_argument('--with_headers',
+        parser.add_argument('--with-headers',
                             help='Show only logs where request headers match HEADER',
                             metavar='HEADER',
                             nargs='+')
-        parser.add_argument('--without_headers',
+        parser.add_argument('--without-headers',
                             help='Don\'t show logs where request headers match HEADER. '
-                                 + 'Overrides --with_headers on conflicts',
+                                 + 'Overrides --with-headers on conflicts',
                             metavar='HEADER',
                             nargs='+')
-        parser.add_argument('--with_parameters',
+        parser.add_argument('--with-parameters',
                             help='Show only logs where URL parameters (GET, POST or PUT) match PARAM',
                             metavar='PARAM',
                             nargs='+')
-        parser.add_argument('--without_parameters',
+        parser.add_argument('--without-parameters',
                             help='Don\'t show logs where URL parameters match PARAM. '
-                                 + 'Overrides --with_parameters on conflicts',
+                                 + 'Overrides --with-parameters on conflicts',
                             metavar='PARAM',
                             nargs='+')
-        parser.add_argument('--show_headers',
+        parser.add_argument('--show-headers',
                             help='Show request headers SHOW_HEADERS. '
                                  + 'Normally only the GET/POST/PUT string is displayed',
                             nargs='+')
         parser.add_argument('-n',
                             help='Show line number',
                             action='store_true')
-        parser.add_argument('--show_raw_content',
+        parser.add_argument('--show-raw-content',
                             help='Show raw content. Normally only parsed post-data is displayed.',
                             action='store_true')
-        parser.add_argument('--with_method',
+        parser.add_argument('--with-method',
                             help='Show only logs where request method is METHOD',
                             metavar='METHOD',
                             nargs='+')
