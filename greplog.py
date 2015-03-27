@@ -10,6 +10,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import urlparse
 from collections import defaultdict
 from enum import Enum
@@ -112,6 +113,43 @@ class Part(object):
         return self.raw_data.__iter__()
 
 
+class Start(Part):
+
+    PATTERN = re.compile('\[(.*)\] \S+ ([\d\.]+) .*')
+
+    def __init__(self):
+        Part.__init__(self)
+        self.ip = None
+        self.timestamp = None
+
+    def add(self, line, line_count):
+        result = re.match(self.PATTERN, line)
+        if result:
+            self.timestamp = time.strptime(result.group(1), '%d/%b/%Y:%H:%M:%S +0000')
+            self.ip = result.group(2)
+
+    def __str__(self):
+        return '{timestamp:s} : {ip:s}'.format(timestamp=time.strftime('%Y-%m-%d %H:%M:%S +0000', self.timestamp),
+                                               ip=self.ip)
+
+    def get_ip(self):
+        return self.ip
+
+    def get_timestamp(self):
+        return time.strftime('%Y-%m-%d %H:%M:%S +0000', self.timestamp)
+
+    def get_raw_timestamp(self):
+        return self.timestamp
+
+    def timestamp_matches(self, start, end=None):
+        if not end:
+            return False
+        else:
+            return False
+
+    def ip_matches(self, ip):
+        return re.search(ip, self.ip)
+
 class RequestHeaders(Part):
     """ Contains all request headers.
 
@@ -166,7 +204,7 @@ class Message():
         self.line_count = line_count
         self.args = args
         self.parts = dict()
-        self.parts[LogParts.STARTED] = Ignore()
+        self.parts[LogParts.STARTED] = Start()
         self.parts[LogParts.REQUEST_HEADERS] = RequestHeaders()
         self.parts[LogParts.CONTENT] = Content()
         self.parts[LogParts.IGNORE] = Ignore()
@@ -229,6 +267,9 @@ class Message():
         for x in iter(self.parts[LogParts.CONTENT]):
             yield x
 
+    def start(self):
+        return str(self.parts[LogParts.STARTED])
+
     @staticmethod
     def footer():
         return '---'
@@ -242,6 +283,7 @@ class Message():
         self.parts[LogParts.CONTENT].get_parameters().update(self.parts[LogParts.REQUEST_HEADERS].get_parameters())
 
         if self.show():
+            yield self.start()
             yield self.request_url()
             for x in self.headers():
                 yield x
@@ -297,6 +339,26 @@ class GrepLog():
                             help='Show only logs where request method is METHOD',
                             metavar='METHOD',
                             nargs='+')
+        parser.add_argument('--with-ip',
+                            help='Show only logs where ip matches IP',
+                            metavar='IP',
+                            nargs='+')
+        parser.add_argument('--without-ip',
+                            help='Don\'t show logs where ip matches IP',
+                            metavar='IP',
+                            nargs='+')
+        parser.add_argument('--timestamp',
+                            help='Show only logs with timestamp TIMESTAMP.',
+                            
+                            metavar='TIMESTAMP')
+        parser.add_argument('--timestamp-around',
+                            help='Show only logs with timestamp TIMESTAMP +- X seconds',
+                            metavar=('TIMESTAMP', 'X'),
+                            nargs=2)
+        parser.add_argument('--timestamp-between',
+                            help='Show only logs with timestamp between START and END',
+                            metavar=('START', 'END'),
+                            nargs=2)
         parser.add_argument('file', help='Logfile(s)',
                             nargs='+')
         return parser
