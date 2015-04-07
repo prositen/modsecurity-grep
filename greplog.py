@@ -5,15 +5,16 @@ Parse apache mod_security logs to find interesting log rows.
 
 """
 import argparse
+import datetime
 import fileinput
 import json
 import re
 import subprocess
 import sys
-import time
 import urlparse
 from collections import defaultdict
 from enum import Enum
+
 try:
     from termcolor import colored
 except ImportError:
@@ -40,7 +41,6 @@ class Methods(Enum):
 
 
 class Parameters(object):
-
     def __init__(self):
         self.param = defaultdict(list)
 
@@ -76,6 +76,7 @@ class Parameters(object):
 
 class Part(object):
     """ Base class for mod_security log parts """
+
     def __init__(self):
         self.raw_data = []
         self.line_count = 0
@@ -114,41 +115,41 @@ class Part(object):
 
 
 class Start(Part):
-
-    PATTERN = re.compile('\[(.*)\] \S+ ([\d\.]+) .*')
+    PATTERN = re.compile('\[(\d+/\w+/\d+):(\d+:\d+:\d+) [^]]+\] \S+ ([\d{1,3}\.]+) .*')
 
     def __init__(self):
         Part.__init__(self)
         self.ip = None
         self.timestamp = None
+        self.date = None
 
     def add(self, line, line_count):
         result = re.match(self.PATTERN, line)
         if result:
-            self.timestamp = time.strptime(result.group(1), '%d/%b/%Y:%H:%M:%S +0000')
-            self.ip = result.group(2)
+            self.date = datetime.datetime.strptime(result.group(1), '%d/%b/%Y')
+            self.timestamp = datetime.datetime.strptime(result.group(2), '%H:%M:%S')
+            self.ip = result.group(3)
 
     def __str__(self):
-        return '{timestamp:s} : {ip:s}'.format(timestamp=time.strftime('%Y-%m-%d %H:%M:%S +0000', self.timestamp),
+        return '{timestamp:s} : {ip:s}'.format(timestamp=self.get_timestamp(),
                                                ip=self.ip)
 
     def get_ip(self):
         return self.ip
 
-    def get_timestamp(self):
-        return time.strftime('%Y-%m-%d %H:%M:%S +0000', self.timestamp)
-
-    def get_raw_timestamp(self):
+    def get_time(self):
         return self.timestamp
 
-    def timestamp_matches(self, start, end=None):
-        if not end:
-            return False
-        else:
-            return False
+    def get_timestamp(self):
+        return '{date:s} {timestamp:s}'.format(date=self.date.strftime('%Y-%m-%d'),
+                                               timestamp=self.timestamp.strftime('%H:%M:%S'))
+
+    def get_date(self):
+        return self.date
 
     def ip_matches(self, ip):
-        return re.search(ip, self.ip)
+        return re.match(ip, self.ip)
+
 
 class RequestHeaders(Part):
     """ Contains all request headers.
@@ -166,7 +167,8 @@ class RequestHeaders(Part):
         return '{method:s} {url:s}{query_parameters:s}'.format(method=colored(self.request_url[0], 'yellow'),
                                                                url=colored(self.request_url[1], 'cyan'),
                                                                query_parameters=colored('?%s' % self.request_url[2],
-                                                                                        'yellow') if self.request_url[2] else "")
+                                                                                        'yellow') if self.request_url[
+                                                                   2] else "")
 
     def add(self, line, line_count):
         Part.add(self, line, line_count)
@@ -214,6 +216,9 @@ class Message():
     def method(self):
         return self.parts[LogParts.REQUEST_HEADERS].get_method()
 
+    def time(self):
+        return self.parts[LogParts.STARTED].get_time()
+
     def add(self, state, line, line_count):
         if line:
             self.parts[state].add(line, line_count)
@@ -242,6 +247,20 @@ class Message():
             if any([self.parts[LogParts.CONTENT].matches(param) for param in self.args.without_parameters]):
                 return False
 
+        if self.args.timestamp:
+            if self.time() != self.args.timestamp:
+                return False
+        elif self.args.timestamp_between:
+            if not (self.args.timestamp_between[0] <= self.time() <= self.args.timestamp_between[1]):
+                return False
+
+        if self.args.with_ip:
+            if not any([self.parts[LogParts.STARTED].ip_matches(ip) for ip in self.args.with_ip]):
+                return False
+        if self.args.without_ip:
+            if any([self.parts[LogParts.STARTED].ip_matches(ip) for ip in self.args.without_ip]):
+                return False
+
         return True
 
     def request_url(self):
@@ -251,7 +270,7 @@ class Message():
         return "%s%s" % (
             colored("%d: " % self.line_count, 'yellow', attrs=['bold']) if self.args.n else "",
             self.parts[LogParts.REQUEST_HEADERS]
-            )
+        )
 
     def headers(self):
         if self.args.show_headers:
@@ -268,7 +287,10 @@ class Message():
             yield x
 
     def start(self):
-        return str(self.parts[LogParts.STARTED])
+        return '{timestamp:s}{ip:s}'.format(
+            timestamp=self.parts[LogParts.STARTED].get_timestamp() if self.args.show_timestamp else "",
+            ip=self.parts[LogParts.STARTED].get_ip() if self.args.show_ip else ""
+        )
 
     @staticmethod
     def footer():
@@ -299,10 +321,25 @@ class Message():
 class GrepLog():
     DELIMITER_PATTERN = re.compile("--(\w+)-(\w)--")
 
+    @staticmethod
+    def parse_time(timestamp):
+        return datetime.datetime.strptime(timestamp, '%H:%M:%S')
+
     def __init__(self, args):
         self.args = self.get_arg_parser().parse_args(args)
         self.state = None
         self.message = Message(0, args)
+
+        if self.args.timestamp or self.args.timestamp_between:
+            self.args.show_timestamp = True
+        if self.args.timestamp:
+            self.args.timestamp = self.parse_time(self.args.timestamp)
+        if self.args.timestamp_between:
+            self.args.timestamp_between = [self.parse_time(x) for x in self.args.timestamp_between]
+
+        if self.args.with_ip or self.args.without_ip:
+            self.args.show_ip = True
+
 
     @staticmethod
     def get_arg_parser():
@@ -331,6 +368,12 @@ class GrepLog():
                             nargs='+')
         parser.add_argument('-n',
                             help='Show line number',
+                            action='store_true'),
+        parser.add_argument('--show-ip',
+                            help='Show IP.',
+                            action='store_true')
+        parser.add_argument('--show-timestamp',
+                            help='Show timestamp',
                             action='store_true')
         parser.add_argument('--show-raw-content',
                             help='Show raw content. Normally only parsed post-data is displayed.',
@@ -340,23 +383,18 @@ class GrepLog():
                             metavar='METHOD',
                             nargs='+')
         parser.add_argument('--with-ip',
-                            help='Show only logs where ip matches IP',
+                            help='Show only logs where ip matches IP. Also enables --show-ip',
                             metavar='IP',
                             nargs='+')
         parser.add_argument('--without-ip',
-                            help='Don\'t show logs where ip matches IP',
+                            help='Don\'t show logs where ip matches IP. Also enables --show-ip',
                             metavar='IP',
                             nargs='+')
         parser.add_argument('--timestamp',
-                            help='Show only logs with timestamp TIMESTAMP.',
-                            
+                            help='Show only logs with timestamp TIMESTAMP. Also enables --show-timestamp',
                             metavar='TIMESTAMP')
-        parser.add_argument('--timestamp-around',
-                            help='Show only logs with timestamp TIMESTAMP +- X seconds',
-                            metavar=('TIMESTAMP', 'X'),
-                            nargs=2)
         parser.add_argument('--timestamp-between',
-                            help='Show only logs with timestamp between START and END',
+                            help='Show only logs with timestamp between START and END. Also enables --show-timestamp',
                             metavar=('START', 'END'),
                             nargs=2)
         parser.add_argument('file', help='Logfile(s)',
