@@ -131,16 +131,19 @@ class Start(Part):
             self.ip = result.group(3)
 
     def __str__(self):
-        return '{timestamp:s} : {ip:s}'.format(timestamp=self.get_timestamp(),
+        return '{timestamp:s} : {ip:s}'.format(timestamp=self.format_timestamp(),
                                                ip=self.ip)
-
-    def get_ip(self):
-        return self.ip
 
     def get_time(self):
         return self.timestamp
 
-    def get_timestamp(self):
+    def format_ip(self, ips):
+        formatted_ip = self.ip
+        for ip in ips:
+            formatted_ip = re.sub(ip, colored(ip, on_color='on_white'), formatted_ip)
+        return formatted_ip
+
+    def format_timestamp(self):
         return '{date:s} {timestamp:s}'.format(date=self.date.strftime('%Y-%m-%d'),
                                                timestamp=self.timestamp.strftime('%H:%M:%S'))
 
@@ -149,6 +152,12 @@ class Start(Part):
 
     def ip_matches(self, ip):
         return re.match(ip, self.ip)
+
+    def time_matches(self, timestamp):
+        return self.timestamp == timestamp
+
+    def time_between(self, start, end):
+        return start <= self.timestamp <= end
 
 
 class RequestHeaders(Part):
@@ -164,11 +173,54 @@ class RequestHeaders(Part):
         self.request_url = ""
 
     def __str__(self):
-        return '{method:s} {url:s}{query_parameters:s}'.format(method=colored(self.request_url[0], 'yellow'),
-                                                               url=colored(self.request_url[1], 'cyan'),
-                                                               query_parameters=colored('?%s' % self.request_url[2],
-                                                                                        'yellow') if self.request_url[
-                                                                   2] else "")
+        return self.format_request_header(None, None)
+
+    def format_request_headers(self, methods, headers):
+        return '{method:s} {url:s}{query_parameters:s}'.format(method=self.format_method(methods),
+                                                               url=self.format_url(headers),
+                                                               query_parameters=self.format_query_parameters(headers))
+
+    def format_method(self, methods):
+        formatted_method = self.request_url[0]
+        if methods:
+            for method in methods:
+                formatted_method = re.sub(method, colored(method, on_color='on_white'), formatted_method)
+        return colored(formatted_method, 'yellow')
+
+    def format_url(self, urls):
+        formatted_url = self.request_url[1]
+        if urls:
+            for url in urls:
+                formatted_url = re.sub(url, colored(url, on_color='on_white'), formatted_url)
+        return colored(formatted_url, 'cyan')
+
+    def format_query_parameters(self, headers):
+        formatted_params = self.request_url[2]
+        if not formatted_params:
+            return ''
+        parts = [(formatted_params, False)]
+        if headers:
+            for h in headers:
+                new_parts = list()
+                for (text, match) in parts:
+                    if match:
+                        new_parts.append((text, True))
+                    else:
+                        res = re.finditer(h, text)
+                        if res:
+                            positions = []
+                            for m in res:
+                                positions.append((m.start(), m.end()))
+                            prev_end = 0
+                            for (start, end) in positions:
+                                new_parts.append((text[prev_end:start], False))
+                                new_parts.append((text[start:end], True))
+                                prev_end = end
+                            new_parts.append((text[prev_end:], False))
+                        else:
+                            new_parts.append((text, False))
+                parts = new_parts
+        return '?' + ''.join([colored(text, 'yellow', on_color='on_white' if match else None) for (text, match) in parts]) if parts else None
 
     def add(self, line, line_count):
         Part.add(self, line, line_count)
@@ -248,10 +300,10 @@ class Message():
                 return False
 
         if self.args.timestamp:
-            if self.time() != self.args.timestamp:
+            if not self.parts[LogParts.STARTED].time_matches(self.args.timestamp):
                 return False
         elif self.args.timestamp_between:
-            if not (self.args.timestamp_between[0] <= self.time() <= self.args.timestamp_between[1]):
+            if not self.parts[LogParts.STARTED].time_between(self.args.timestamp_between[0], self.args.timestamp_between[1]):
                 return False
 
         if self.args.with_ip:
@@ -269,7 +321,7 @@ class Message():
         """
         return "%s%s" % (
             colored("%d: " % self.line_count, 'yellow', attrs=['bold']) if self.args.n else "",
-            self.parts[LogParts.REQUEST_HEADERS]
+            self.parts[LogParts.REQUEST_HEADERS].format_request_headers(self.args.with_method, self.args.with_headers)
         )
 
     def headers(self):
@@ -288,8 +340,8 @@ class Message():
 
     def start(self):
         return '{timestamp:s}{ip:s}'.format(
-            timestamp=self.parts[LogParts.STARTED].get_timestamp() if self.args.show_timestamp else "",
-            ip=self.parts[LogParts.STARTED].get_ip() if self.args.show_ip else ""
+            timestamp=self.parts[LogParts.STARTED].format_timestamp() if self.args.show_timestamp else "",
+            ip=self.parts[LogParts.STARTED].format_ip(self.args.with_ip) if self.args.show_ip else ""
         )
 
     @staticmethod
@@ -339,7 +391,6 @@ class GrepLog():
 
         if self.args.with_ip or self.args.without_ip:
             self.args.show_ip = True
-
 
     @staticmethod
     def get_arg_parser():
