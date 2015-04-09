@@ -23,6 +23,41 @@ except ImportError:
         return text
 
 
+def split_re(text, patterns):
+    """ Split 'text' according to the regular expressions in 'pattern'
+    Returns list of (text, matching) """
+    if not text:
+        return None
+    parts = [(text, False)]
+    if not patterns:
+        return parts
+    for pattern in patterns:
+        new_parts = list()
+        for (text, matching) in parts:
+            if matching:
+                new_parts.append((text, True))
+            else:
+                res = re.finditer(pattern, text)
+                if res:
+                    positions = list()
+                    for r in res:
+                        positions.append((r.start(), r.end()))
+                    prev_end = 0
+                    for (start, end) in positions:
+                        if start > prev_end:
+                            new_parts.append((text[prev_end:start], False))
+                        new_parts.append((text[start:end], True))
+                        prev_end = end
+                    if prev_end < len(text):
+                        new_parts.append((text[prev_end:], False))
+            parts = new_parts
+    return parts
+
+
+def format_split(parts, color, on_color):
+    return ''.join([colored(text, color, on_color=on_color if match else None) for (text, match) in parts])
+
+
 class LogParts(Enum):
     STARTED = 1
     REQUEST_HEADERS = 2
@@ -138,10 +173,7 @@ class Start(Part):
         return self.timestamp
 
     def format_ip(self, ips):
-        formatted_ip = self.ip
-        for ip in ips:
-            formatted_ip = re.sub(ip, colored(ip, on_color='on_white'), formatted_ip)
-        return formatted_ip
+        return format_split(split_re(self.ip, ips), color=None, on_color='on_white')
 
     def format_timestamp(self):
         return '{date:s} {timestamp:s}'.format(date=self.date.strftime('%Y-%m-%d'),
@@ -173,7 +205,7 @@ class RequestHeaders(Part):
         self.request_url = ""
 
     def __str__(self):
-        return self.format_request_header(None, None)
+        return self.format_request_headers(None, None)
 
     def format_request_headers(self, methods, headers):
         return '{method:s} {url:s}{query_parameters:s}'.format(method=self.format_method(methods),
@@ -181,46 +213,14 @@ class RequestHeaders(Part):
                                                                query_parameters=self.format_query_parameters(headers))
 
     def format_method(self, methods):
-        formatted_method = self.request_url[0]
-        if methods:
-            for method in methods:
-                formatted_method = re.sub(method, colored(method, on_color='on_white'), formatted_method)
-        return colored(formatted_method, 'yellow')
+        return format_split(split_re(self.request_url[0], methods), color='yellow', on_color='on_white')
 
     def format_url(self, urls):
-        formatted_url = self.request_url[1]
-        if urls:
-            for url in urls:
-                formatted_url = re.sub(url, colored(url, on_color='on_white'), formatted_url)
-        return colored(formatted_url, 'cyan')
+        return format_split(split_re(self.request_url[1], urls), color='cyan', on_color='on_white')
 
     def format_query_parameters(self, headers):
-        formatted_params = self.request_url[2]
-        if not formatted_params:
-            return ''
-        parts = [(formatted_params, False)]
-        if headers:
-            for h in headers:
-                new_parts = list()
-                for (text, match) in parts:
-                    if match:
-                        new_parts.append((text, True))
-                    else:
-                        res = re.finditer(h, text)
-                        if res:
-                            positions = []
-                            for m in res:
-                                positions.append((m.start(), m.end()))
-                            prev_end = 0
-                            for (start, end) in positions:
-                                new_parts.append((text[prev_end:start], False))
-                                new_parts.append((text[start:end], True))
-                                prev_end = end
-                            new_parts.append((text[prev_end:], False))
-                        else:
-                            new_parts.append((text, False))
-                parts = new_parts
-        return '?' + ''.join([colored(text, 'yellow', on_color='on_white' if match else None) for (text, match) in parts]) if parts else None
+        parts = split_re(self.request_url[2], headers)
+        return ('?' + format_split(parts, 'yellow', 'on_white')) if parts else ''
 
     def add(self, line, line_count):
         Part.add(self, line, line_count)
