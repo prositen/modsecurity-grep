@@ -69,8 +69,8 @@ def split_to_dict(list_to_split, separator='='):
     return ret_val
 
 
-def format_split(parts, color, on_color):
-    return ''.join([colored(text, color, on_color=on_color if match else None) for (text, match) in parts])
+def format_split(parts, color, on_color, attrs=None):
+    return ''.join([colored(text, color, on_color=on_color if match else None, attrs=attrs) for (text, match) in parts])
 
 
 class LogParts(Enum):
@@ -104,10 +104,6 @@ class Parameters(object):
             self.param.update(params.param)
         except AttributeError:
             self.param.update(params)
-
-    def __iter__(self):
-        for k, v in self.param.iteritems():
-            yield colored(k, 'red', attrs=['bold']) + '=' + colored(v, 'green')
 
     def iteritems(self):
         return self.param.iteritems()
@@ -210,9 +206,14 @@ class Start(Part):
         return re.match(ip, self.ip)
 
     def time_matches(self, timestamp):
+        if not timestamp:
+            return True
         return self.timestamp == timestamp
 
-    def time_between(self, start, end):
+    def time_between(self, between):
+        if not between:
+            return True
+        start, end = between
         return start <= self.timestamp <= end
 
 
@@ -232,10 +233,15 @@ class RequestHeaders(Part):
     def __str__(self):
         return self.format_request(None, None)
 
-    def format_request(self, methods, headers):
+    def format_request(self, methods, headers, params):
+        query_params = dict()
+        if headers:
+            query_params.update(headers)
+        if params:
+            query_params.update(params)
         return '{method:s} {url:s}{query_parameters:s}'.format(method=self.format_method(methods),
                                                                url=self.format_url(headers),
-                                                               query_parameters=self.format_query_parameters(headers))
+                                                               query_parameters=self.format_query_parameters(query_params))
 
     def format_method(self, methods):
         return format_split(split_re(self.request_url[0], methods), color='yellow', on_color='on_white')
@@ -311,40 +317,26 @@ class Message():
     def show(self):
         if not self.parts[LogParts.REQUEST_HEADERS].headers.matches(self.args.with_headers):
             return False
-        if self.args.without_headers:
-            if any([self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.without_headers]):
+        if self.args.without_headers and any([self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.without_headers]):
                 return False
 
-        if self.args.with_method:
-            if not any([str(self.method()) == m for m in self.args.with_method]):
-                return False
-        if self.args.with_parameters:
-            for param in self.args.with_parameters:
-                try:
-                    key, value = param.split('=', 2)
-                except ValueError:
-                    key = param
-                    value = None
-                if not self.parts[LogParts.CONTENT].get_parameters().matches(key, value):
-                    return False
-        if self.args.without_parameters:
-            if any([self.parts[LogParts.CONTENT].matches(param) for param in self.args.without_parameters]):
-                return False
+        if self.args.with_method and not any([str(self.method()) == m for m in self.args.with_method]):
+            return False
 
-        if self.args.timestamp:
-            if not self.parts[LogParts.STARTED].time_matches(self.args.timestamp):
-                return False
-        elif self.args.timestamp_between:
-            if not self.parts[LogParts.STARTED].time_between(self.args.timestamp_between[0],
-                                                             self.args.timestamp_between[1]):
-                return False
+        if not self.parts[LogParts.CONTENT].get_parameters().matches(self.args.with_parameters):
+            return False
+        if self.args.without_parameters and any([self.parts[LogParts.CONTENT].matches(param) for param in self.args.without_parameters]):
+            return False
 
-        if self.args.with_ip:
-            if not any([self.parts[LogParts.STARTED].ip_matches(ip) for ip in self.args.with_ip]):
-                return False
-        if self.args.without_ip:
-            if any([self.parts[LogParts.STARTED].ip_matches(ip) for ip in self.args.without_ip]):
-                return False
+        if not self.parts[LogParts.STARTED].time_matches(self.args.timestamp):
+            return False
+        if not self.parts[LogParts.STARTED].time_between(self.args.timestamp_between):
+            return False
+
+        if self.args.with_ip and not any([self.parts[LogParts.STARTED].ip_matches(ip) for ip in self.args.with_ip]):
+            return False
+        if self.args.without_ip and any([self.parts[LogParts.STARTED].ip_matches(ip) for ip in self.args.without_ip]):
+            return False
 
         return True
 
@@ -354,7 +346,9 @@ class Message():
         """
         return "%s%s" % (
             colored("%d: " % self.line_count, 'yellow', attrs=['bold']) if self.args.n else "",
-            self.parts[LogParts.REQUEST_HEADERS].format_request(self.args.with_method, self.args.with_headers)
+            self.parts[LogParts.REQUEST_HEADERS].format_request(self.args.with_method,
+                                                                self.args.with_headers,
+                                                                self.args.with_parameters)
         )
 
     def headers(self):
@@ -374,8 +368,15 @@ class Message():
                     ))
 
     def parameters(self):
-        for x in self.parts[LogParts.CONTENT].get_parameters():
-            yield colored(x, 'red')
+        for name, value in self.parts[LogParts.CONTENT].get_parameters().iteritems():
+            yield('{name:s}={value:s}'.format(
+                name=format_split(split_re(name, self.args.with_parameters.iterkeys()),
+                                  color='red', on_color='on_white', attrs=['bold']),
+                value=format_split(split_re(value, self.args.with_parameters.itervalues()),
+                                   color='green', on_color='on_white')
+            ))
+
+            # yield colored(x, 'red')
 
     def content(self):
         for x in iter(self.parts[LogParts.CONTENT]):
@@ -440,6 +441,8 @@ class GrepLog():
             if not self.args.show_headers:
                 self.args.show_headers = list()
             self.args.show_headers.extend(self.args.with_headers.keys())
+
+        self.args.with_parameters = split_to_dict(self.args.with_parameters, '=')
 
     @staticmethod
     def get_arg_parser():
