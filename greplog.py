@@ -31,7 +31,10 @@ def split_re(text, patterns):
     parts = [(text, False)]
     if not patterns:
         return parts
+
     for pattern in patterns:
+        if not pattern:
+            continue
         new_parts = list()
         for (text, matching) in parts:
             if matching:
@@ -52,6 +55,18 @@ def split_re(text, patterns):
                         new_parts.append((text[prev_end:], False))
             parts = new_parts
     return parts
+
+
+def split_to_dict(list_to_split, separator='='):
+    ret_val = dict()
+    if list_to_split:
+        for x in list_to_split:
+            try:
+                key, value = x.split(separator, 1)
+            except ValueError:
+                key, value = x, None
+        ret_val[key] = value
+    return ret_val
 
 
 def format_split(parts, color, on_color):
@@ -100,15 +115,22 @@ class Parameters(object):
     def len(self):
         return len(self.param)
 
-    def matches(self, regex_name, regex_value):
-        for k, v in self.param.iteritems():
-            if re.search(regex_name, k):
-                if regex_value:
-                    if any(re.search(regex_value, value) for value in v):
-                        return True
-                else:
-                    return True
-        return False
+    def matches(self, names_values):
+        """
+        All name-value pairs in 'name_values' must match
+        """
+        if not names_values:
+            return True
+        for re_k, re_v in names_values.iteritems():
+            for k, v in self.param.iteritems():
+                if re.search(re_k, k):
+                    if re_v:
+                        if not any(re.search(re_v, value) for value in v):
+                            return False
+                    break
+            else:   # no break
+                return False
+        return True
 
 
 class Part(object):
@@ -287,9 +309,7 @@ class Message():
             self.parts[state].add(line, line_count)
 
     def show(self):
-        if self.args.with_headers and not any(
-                [self.parts[LogParts.REQUEST_HEADERS].headers.matches(name, value) for name, value in
-                 self.args.with_headers.iteritems()]):
+        if not self.parts[LogParts.REQUEST_HEADERS].headers.matches(self.args.with_headers):
             return False
         if self.args.without_headers:
             if any([self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.without_headers]):
@@ -416,18 +436,10 @@ class GrepLog():
             self.args.show_ip = True
 
         if self.args.with_headers:
-            headers = dict()
+            self.args.with_headers = split_to_dict(self.args.with_headers, '=')
             if not self.args.show_headers:
                 self.args.show_headers = list()
-            for h in self.args.with_headers:
-                try:
-                    key, value = h.split('=', 1)
-                except ValueError:
-                    key = h
-                    value = None
-                headers[key] = value
-                self.args.show_headers.append(key)
-            self.args.with_headers = headers
+            self.args.show_headers.extend(self.args.with_headers.keys())
 
     @staticmethod
     def get_arg_parser():
