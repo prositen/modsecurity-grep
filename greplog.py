@@ -70,6 +70,8 @@ class Methods(Enum):
     GET = 1
     POST = 2
     PUT = 3
+    HEAD = 4
+    DELETE = 5
 
     def __str__(self):
         return self.name
@@ -197,17 +199,18 @@ class RequestHeaders(Part):
 
      Query parameters are parsed and accessible through get_parameters.
     """
-    QS = re.compile("(GET|POST|PUT) ([^\s\?]+)(\??(\S*)) .*")
+    QS = re.compile("(GET|POST|PUT|DELETE|HEAD) ([^\s\?]+)(\??(\S*)) .*")
 
     def __init__(self):
         Part.__init__(self)
         self._method = None
         self.request_url = ""
+        self.headers = Parameters()
 
     def __str__(self):
-        return self.format_request_headers(None, None)
+        return self.format_request(None, None)
 
-    def format_request_headers(self, methods, headers):
+    def format_request(self, methods, headers):
         return '{method:s} {url:s}{query_parameters:s}'.format(method=self.format_method(methods),
                                                                url=self.format_url(headers),
                                                                query_parameters=self.format_query_parameters(headers))
@@ -232,8 +235,16 @@ class RequestHeaders(Part):
                 self._method = Methods.POST
             elif line.startswith('PUT'):
                 self._method = Methods.PUT
+            elif line.startswith('DELETE'):
+                self._method = Methods.DELETE
+            elif line.startswith('HEAD'):
+                self._method = Methods.HEAD
             self.parameters.update(urlparse.parse_qs(result.group(4)).iteritems())
             self.request_url = (result.group(1), result.group(2), result.group(4))
+            self.headers.add(line, [])
+        else:
+            key, value = line.split(':', 1)
+            self.headers.add(key, [value.strip()])
 
     def get_method(self):
         return self._method
@@ -276,9 +287,10 @@ class Message():
             self.parts[state].add(line, line_count)
 
     def show(self):
-        if self.args.with_headers:
-            if not any([self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.with_headers]):
-                return False
+        if self.args.with_headers and not any(
+                [self.parts[LogParts.REQUEST_HEADERS].headers.matches(name, value) for name, value in
+                 self.args.with_headers.iteritems()]):
+            return False
         if self.args.without_headers:
             if any([self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.without_headers]):
                 return False
@@ -303,7 +315,8 @@ class Message():
             if not self.parts[LogParts.STARTED].time_matches(self.args.timestamp):
                 return False
         elif self.args.timestamp_between:
-            if not self.parts[LogParts.STARTED].time_between(self.args.timestamp_between[0], self.args.timestamp_between[1]):
+            if not self.parts[LogParts.STARTED].time_between(self.args.timestamp_between[0],
+                                                             self.args.timestamp_between[1]):
                 return False
 
         if self.args.with_ip:
@@ -321,14 +334,24 @@ class Message():
         """
         return "%s%s" % (
             colored("%d: " % self.line_count, 'yellow', attrs=['bold']) if self.args.n else "",
-            self.parts[LogParts.REQUEST_HEADERS].format_request_headers(self.args.with_method, self.args.with_headers)
+            self.parts[LogParts.REQUEST_HEADERS].format_request(self.args.with_method, self.args.with_headers)
         )
 
     def headers(self):
         if self.args.show_headers:
-            for x in iter(self.parts[LogParts.REQUEST_HEADERS]):
-                if any([re.search(regexp, x) for regexp in self.args.show_headers]):
-                    yield x
+            for name, value in self.parts[LogParts.REQUEST_HEADERS].headers.iteritems():
+                if len(value):
+                    value = value[0]
+                else:
+                    value = ''
+                if any([re.search(x, name) for x in self.args.show_headers]):
+                    yield ('{name:s}{colon:s}{value:s}'.format(
+                        name=format_split(split_re(name, self.args.with_headers.iterkeys()),
+                                          color=None, on_color='on_white'),
+                        colon=': ' if value else '',
+                        value=format_split(split_re(value, self.args.with_headers.itervalues()),
+                                           color=None, on_color='on_white') if value else ''
+                    ))
 
     def parameters(self):
         for x in self.parts[LogParts.CONTENT].get_parameters():
@@ -392,11 +415,26 @@ class GrepLog():
         if self.args.with_ip or self.args.without_ip:
             self.args.show_ip = True
 
+        if self.args.with_headers:
+            headers = dict()
+            if not self.args.show_headers:
+                self.args.show_headers = list()
+            for h in self.args.with_headers:
+                try:
+                    key, value = h.split('=', 1)
+                except ValueError:
+                    key = h
+                    value = None
+                headers[key] = value
+                self.args.show_headers.append(key)
+            self.args.with_headers = headers
+
     @staticmethod
     def get_arg_parser():
         parser = argparse.ArgumentParser(description='Parse mod_security logs')
         parser.add_argument('--with-headers',
-                            help='Show only logs where request headers match HEADER',
+                            help='Show only logs where request headers match HEADER.'
+                                 + 'Also enables --show-header HEADER',
                             metavar='HEADER',
                             nargs='+')
         parser.add_argument('--without-headers',
