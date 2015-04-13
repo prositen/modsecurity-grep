@@ -20,12 +20,34 @@ try:
 except ImportError:
     # noinspection PyUnusedLocal
     def colored(text, *args, **kwargs):
+        """
+        Dummy 'colored' function used when termcolor isn't installed.
+        :param text: Text to display
+        :param args: Ignored
+        :param kwargs:  Ignored
+        :return: The input text, unchanged
+        """
         return text
 
 
 def split_re(text, patterns):
     """ Split 'text' according to the regular expressions in 'pattern'
-    Returns list of (text, matching) """
+    :param text: Text to split
+    :param patterns: Regular expressions to tokenize on
+    :returns list of (text, matching)
+
+    Example:
+    >>> split_re("http://dummy.com/?param=a", ["param"])
+    [('http://dummy.com/?', False), ('param', True), ('=a', False)]
+    >>> split_re("The quick brown fox jumps over the lazy dog", ["[Tt]he", "e"])
+    [('The', True), (' quick brown fox jumps ov', False), ('e', True), ('r ', False), ('the', True), (' lazy dog', False)]
+    >>> split_re(None, ["derp"]) is None
+    True
+    >>> split_re("The quick brown fox jumps over the lazy dog", None)
+    [('The quick brown fox jumps over the lazy dog', False)]
+    >>> split_re("http://dummy.com/?param=a", [ None ])
+    [('http://dummy.com/?param=a', False)]
+    """
     if not text:
         return None
     parts = [(text, False)]
@@ -58,6 +80,24 @@ def split_re(text, patterns):
 
 
 def split_to_dict(list_to_split, separator='='):
+    """
+    Split the strings in a list, and insert into a dictionary.
+    Duplicate keys overwrites the previous entries.
+    :param list_to_split: list of string
+    :param separator: default =
+    :return: Dictionary with keys & values from list
+
+    >>> split_to_dict(["a:1", "b:2"], ':')
+    {'a': '1', 'b': '2'}
+    >>> split_to_dict(["a=1", "b=2"])
+    {'a': '1', 'b': '2'}
+    >>> split_to_dict(["a=1", "b=2", "a=3"])
+    {'a': '3', 'b': '2'}
+    >>> split_to_dict(None)
+    {}
+    >>> split_to_dict(["a=1", "b", "c=3"])
+    {'a': '1', 'c': '3', 'b': None}
+    """
     ret_val = dict()
     if list_to_split:
         for x in list_to_split:
@@ -65,15 +105,26 @@ def split_to_dict(list_to_split, separator='='):
                 key, value = x.split(separator, 1)
             except ValueError:
                 key, value = x, None
-        ret_val[key] = value
+            ret_val[key] = value
     return ret_val
 
 
 def format_split(parts, color, on_color, attrs=None):
+    """
+    Create a color-formatted string from the output of 'split_re'.
+    :param parts: Output from split_re
+    :param color: text color
+    :param on_color: background color for text matching patterns
+    :param attrs: Extra text attributes used by colored
+    :return: Color-formatted string
+    """
     return ''.join([colored(text, color, on_color=on_color if match else None, attrs=attrs) for (text, match) in parts])
 
 
 class LogParts(Enum):
+    """
+    The different parts of an audit log that we care about.
+    """
     STARTED = 1
     REQUEST_HEADERS = 2
     CONTENT = 3
@@ -82,6 +133,9 @@ class LogParts(Enum):
 
 
 class Methods(Enum):
+    """
+    HTTP methods
+    """
     GET = 1
     POST = 2
     PUT = 3
@@ -93,13 +147,29 @@ class Methods(Enum):
 
 
 class Parameters(object):
+    """
+    Contains name-value pairs and a means to regex search in them.
+    Used for e.g. HTTP parameters and request headers.
+    """
     def __init__(self):
         self.param = defaultdict(list)
 
     def add(self, key, value):
+        """
+        Add a key-value pair to the collection. The value is added to the existing
+         values.
+        :param key:
+        :param value:
+        :return:
+        """
         self.param[key].extend(value)
 
     def update(self, params):
+        """
+        Adds a dictionary or Parameters instance to the collection. Overwrites existing values.
+        :param params:
+        :return:
+        """
         try:
             self.param.update(params.param)
         except AttributeError:
@@ -109,11 +179,15 @@ class Parameters(object):
         return self.param.iteritems()
 
     def len(self):
+        """
+        :return: Number of parameter name-values
+        """
         return len(self.param)
 
     def matches(self, names_values):
         """
         All name-value pairs in 'name_values' must match
+        :param names_values Regular expressions to match keys & values with
         """
         if not names_values:
             return True
@@ -170,7 +244,19 @@ class Part(object):
 
 
 class Start(Part):
-    PATTERN = re.compile('\[(\d+/\w+/\d+):(\d+:\d+:\d+) [^]]+\] \S+ ([\d{1,3}\.]+) .*')
+
+    """ [day/month/year:hour:minute:second timezone] random_string ip whatever
+    """
+    PATTERN = re.compile(r"""\[
+                             (\d+/\w+/\d+): # Date as d/b/Y
+                             (\d+:\d+:\d+)  # Time
+                             [^]]+          # Timezone (ignored)
+                             \]
+                             \S+            # Random string (ignored)
+                             ([\d{1,3}\.]+) # IP
+                             .*             # Ignore the rest of the string
+                             """,
+                         re.X)
 
     def __init__(self):
         Part.__init__(self)
