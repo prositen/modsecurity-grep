@@ -109,7 +109,7 @@ def split_to_dict(list_to_split, separator='='):
     return ret_val
 
 
-def format_split(parts, color, on_color, attrs=None):
+def format_split(parts, colors):
     """
     Create a color-formatted string from the output of 'split_re'.
     :param parts: Output from split_re
@@ -118,7 +118,28 @@ def format_split(parts, color, on_color, attrs=None):
     :param attrs: Extra text attributes used by colored
     :return: Color-formatted string
     """
-    return ''.join([colored(text, color, on_color=on_color if match else None, attrs=attrs) for (text, match) in parts])
+    return ''.join(
+        [colored(text, color=colors.color, on_color=colors.on_color if match else None, attrs=colors.attrs) for
+         (text, match) in parts])
+
+
+class Color(object):
+    def __init__(self, color, on_color, attrs=None):
+        self.color = color
+        self.on_color = on_color
+        self.attrs = attrs
+
+
+class Colors(object):
+    LINE_COUNT = Color('yellow', None, ['bold'])
+    HEADER_NAME = Color(None, 'on_white')
+    HEADER_VALUE = Color(None, 'on_white')
+    PARAM_NAME = Color('red', 'on_white', ['bold'])
+    PARAM_VALUE = Color('green', 'on_white')
+    QUERY_PARAMETER = Color('yellow', 'on_white')
+    URL = Color('cyan', 'on_white')
+    METHOD = Color('yellow', 'on_white')
+    IP = Color(None, 'on_white')
 
 
 class LogParts(Enum):
@@ -151,6 +172,7 @@ class Parameters(object):
     Contains name-value pairs and a means to regex search in them.
     Used for e.g. HTTP parameters and request headers.
     """
+
     def __init__(self):
         self.param = defaultdict(list)
 
@@ -198,7 +220,7 @@ class Parameters(object):
                         if not any(re.search(re_v, value) for value in v):
                             return False
                     break
-            else:   # no break
+            else:  # no break
                 return False
         return True
 
@@ -244,7 +266,6 @@ class Part(object):
 
 
 class Start(Part):
-
     """ [day/month/year:hour:minute:second timezone] random_string ip whatever
     """
     PATTERN = re.compile(r"""\[
@@ -279,7 +300,7 @@ class Start(Part):
         return self.timestamp
 
     def format_ip(self, ips):
-        return format_split(split_re(self.ip, ips), color=None, on_color='on_white')
+        return format_split(split_re(self.ip, ips), colors=Colors.IP)
 
     def format_timestamp(self):
         return '{date:s} {timestamp:s}'.format(date=self.date.strftime('%Y-%m-%d'),
@@ -327,17 +348,18 @@ class RequestHeaders(Part):
             query_params.update(params)
         return '{method:s} {url:s}{query_parameters:s}'.format(method=self.format_method(methods),
                                                                url=self.format_url(headers),
-                                                               query_parameters=self.format_query_parameters(query_params))
+                                                               query_parameters=self.format_query_parameters(
+                                                                   query_params))
 
     def format_method(self, methods):
-        return format_split(split_re(self.request_url[0], methods), color='yellow', on_color='on_white')
+        return format_split(split_re(self.request_url[0], methods), colors=Colors.METHOD)
 
     def format_url(self, urls):
-        return format_split(split_re(self.request_url[1], urls), color='cyan', on_color='on_white')
+        return format_split(split_re(self.request_url[1], urls), colors=Colors.URL)
 
     def format_query_parameters(self, headers):
         parts = split_re(self.request_url[2], headers)
-        return ('?' + format_split(parts, 'yellow', 'on_white')) if parts else ''
+        return ('?' + format_split(parts, colors=Colors.QUERY_PARAMETER)) if parts else ''
 
     def add(self, line, line_count):
         Part.add(self, line, line_count)
@@ -403,15 +425,17 @@ class Message():
     def show(self):
         if not self.parts[LogParts.REQUEST_HEADERS].headers.matches(self.args.with_headers):
             return False
-        if self.args.without_headers and any([self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.without_headers]):
-                return False
+        if self.args.without_headers and any(
+                [self.parts[LogParts.REQUEST_HEADERS].matches(h) for h in self.args.without_headers]):
+            return False
 
         if self.args.with_method and not any([str(self.method()) == m for m in self.args.with_method]):
             return False
 
         if not self.parts[LogParts.CONTENT].get_parameters().matches(self.args.with_parameters):
             return False
-        if self.args.without_parameters and any([self.parts[LogParts.CONTENT].matches(param) for param in self.args.without_parameters]):
+        if self.args.without_parameters and any(
+                [self.parts[LogParts.CONTENT].matches(param) for param in self.args.without_parameters]):
             return False
 
         if not self.parts[LogParts.STARTED].time_matches(self.args.timestamp):
@@ -431,7 +455,8 @@ class Message():
         Colorized string representation of the request URL
         """
         return "%s%s" % (
-            colored("%d: " % self.line_count, 'yellow', attrs=['bold']) if self.args.n else "",
+            colored("%d: " % self.line_count, Colors.LINE_COUNT.color, on_color=Colors.LINE_COUNT.on_color,
+                    attrs=Colors.LINE_COUNT.attrs) if self.args.n else "",
             self.parts[LogParts.REQUEST_HEADERS].format_request(self.args.with_method,
                                                                 self.args.with_headers,
                                                                 self.args.with_parameters)
@@ -447,19 +472,19 @@ class Message():
                 if any([re.search(x, name) for x in self.args.show_headers]):
                     yield ('{name:s}{colon:s}{value:s}'.format(
                         name=format_split(split_re(name, self.args.with_headers.iterkeys()),
-                                          color=None, on_color='on_white'),
+                                          colors=Colors.HEADER_NAME),
                         colon=': ' if value else '',
                         value=format_split(split_re(value, self.args.with_headers.itervalues()),
-                                           color=None, on_color='on_white') if value else ''
+                                           colors=Colors.HEADER_VALUE) if value else ''
                     ))
 
     def parameters(self):
         for name, value in self.parts[LogParts.CONTENT].get_parameters().iteritems():
-            yield('{name:s}={value:s}'.format(
+            yield ('{name:s}={value:s}'.format(
                 name=format_split(split_re(name, self.args.with_parameters.iterkeys()),
-                                  color='red', on_color='on_white', attrs=['bold']),
+                                  colors=Colors.PARAM_NAME),
                 value=format_split(split_re(value, self.args.with_parameters.itervalues()),
-                                   color='green', on_color='on_white')
+                                   colors=Colors.PARAM_VALUE)
             ))
 
             # yield colored(x, 'red')
