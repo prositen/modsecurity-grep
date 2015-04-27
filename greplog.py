@@ -7,6 +7,7 @@ Parse apache mod_security logs to find interesting log rows.
 import argparse
 import datetime
 import fileinput
+import gzip
 import json
 import re
 import subprocess
@@ -670,7 +671,7 @@ def main(args):
                          stdout=sys.stdout)
     filename = None
     try:
-        for line in fileinput.input(greplog.args.file):
+        for line in fileinput.input(greplog.args.file, openhook=fileinput.hook_compressed):
             if filename != fileinput.filename():
                 filename = fileinput.filename()
                 p.stdin.write(header(filename))
