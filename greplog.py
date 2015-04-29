@@ -273,10 +273,12 @@ class Start(Part):
     PATTERN = re.compile(r"""\[
                              (\d+/\w+/\d+): # Date as d/b/Y
                              (\d+:\d+:\d+)  # Time
-                             [^]]+          # Timezone (ignored)
+                             \s
+                             \S+            # Timezone (ignored)
                              \]
+                             \s
                              \S+            # Random string (ignored)
-                             ([\d{1,3}\.]+) # IP
+                             \s([\d{1,3}\.]+) # IP
                              .*             # Ignore the rest of the string
                              """,
                          re.X)
@@ -293,6 +295,8 @@ class Start(Part):
             self.date = datetime.datetime.strptime(result.group(1), '%d/%b/%Y')
             self.timestamp = datetime.datetime.strptime(result.group(2), '%H:%M:%S')
             self.ip = result.group(3)
+        else:
+            print "No time match for", line
 
     def __str__(self):
         return '{timestamp:s} : {ip:s}'.format(timestamp=self.format_timestamp(),
