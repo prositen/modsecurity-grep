@@ -163,6 +163,7 @@ class Methods(Enum):
     PUT = 3
     HEAD = 4
     DELETE = 5
+    OPTIONS = 6
 
     def __str__(self):
         return self.name
@@ -330,7 +331,7 @@ class RequestHeaders(Part):
 
      Query parameters are parsed and accessible through get_parameters.
     """
-    QS = re.compile("(GET|POST|PUT|DELETE|HEAD) ([^\s\?]+)(\??(\S*))")
+    QS = re.compile("(GET|POST|PUT|DELETE|HEAD|OPTIONS) ([^\s\?]+)(\??(\S*))")
 
     def __init__(self):
         Part.__init__(self)
@@ -376,6 +377,8 @@ class RequestHeaders(Part):
                 self._method = Methods.DELETE
             elif line.startswith('HEAD'):
                 self._method = Methods.HEAD
+            elif line.startswith('OPTIONS'):
+                self._method = Methods.OPTIONS
             self.parameters.update(urlparse.parse_qs(result.group(4)).iteritems())
             self.request_url = (result.group(1), result.group(2), result.group(4))
             self.headers.add(line, [])
