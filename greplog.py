@@ -484,7 +484,7 @@ class Message():
             yield ('{name:s}={value:s}'.format(
                 name=format_split(split_re(name, self.args.with_parameters.iterkeys()),
                                   colors=Colors.PARAM_NAME),
-                value=format_split(split_re(value, self.args.with_parameters.itervalues()),
+                value=format_split(split_re(value[0], self.args.with_parameters.itervalues()),
                                    colors=Colors.PARAM_VALUE)
             ))
 
