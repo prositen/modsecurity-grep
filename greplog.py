@@ -330,7 +330,7 @@ class RequestHeaders(Part):
 
      Query parameters are parsed and accessible through get_parameters.
     """
-    QS = re.compile("(GET|POST|PUT|DELETE|HEAD) ([^\s\?]+)(\??(\S*)) .*")
+    QS = re.compile("(GET|POST|PUT|DELETE|HEAD) ([^\s\?]+)(\??(\S*))")
 
     def __init__(self):
         Part.__init__(self)
