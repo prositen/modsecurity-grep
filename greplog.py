@@ -673,7 +673,7 @@ def main(args):
     greplog = GrepLog(args)
 
     # Pipe output through less. Hackish, but better than writing my own pager.
-    p = subprocess.Popen(['less', '-F', '-R', '-S', '-X', '-K'],
+    p = subprocess.Popen(['less', '-F', '-R', '-K'],
                          stdin=subprocess.PIPE,
                          stdout=sys.stdout)
     filename = None
