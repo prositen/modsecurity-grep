@@ -1,8 +1,10 @@
 # modsecurity-grep
 
+## greplog.py
+
 Search through audit logs created by [modsecurity](https://www.modsecurity.org/)
 
-## Features
+### Features
 
 - Include/exclude request headers
 - Include/exclude query parameters & post content
@@ -32,6 +34,11 @@ but not
 or
 
 `Cookie: en`
+
+
+## jsonlog.py
+
+Transform your logs to json.
 
 
 ## Requirements 
