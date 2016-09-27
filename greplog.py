@@ -61,7 +61,7 @@ def format_split(parts, colors):
         :return: Color-formatted string
         """
     return ''.join(
-        [colored(text, color=colors.color, on_color=colors.on_color if match else None, attrs=colors.attrs) for
+        [colored(str(text), color=colors.color, on_color=colors.on_color if match else None, attrs=colors.attrs) for
          (text, match) in parts])
 
 
