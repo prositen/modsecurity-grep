@@ -49,7 +49,12 @@ class JsonMessage(FormattedMessage):
         return parameter_to_dict(self.response_headers().get_headers())
 
     def format_content(self):
-        return parameter_to_dict(self.content().get_parameters())
+        d = dict()
+        payload = parameter_to_dict(self.content().get_parameters())
+        if payload:
+            d['payload'] = payload
+        d['content'] = self.content().raw_data
+        return d
 
     @staticmethod
     def message_handler_factory(stream):
@@ -62,7 +67,7 @@ class JsonMessage(FormattedMessage):
 
             content = message.format_content()
             if content:
-                jsonmessage['request']['payload'] = content
+                jsonmessage['request'].extend(content)
 
             jsonmessage['response'] = dict()
             jsonmessage['response']['headers'] = message.format_response_headers()

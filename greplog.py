@@ -86,9 +86,9 @@ class ColorMessage(FormattedMessage):
         return format_split(split_re(self.request_headers().get_path(), urls), colors=Colors.URL)
 
     def format_request_headers(self):
-        headers = self.request_headers()
+        headers = self.request_headers().headers
         if self.args.show_headers:
-            for name, value in headers.get_request_headers.iteritems():
+            for name, value in headers.iteritems():
                 if len(value):
                     value = value[0]
                 else:
@@ -138,7 +138,7 @@ class ColorMessage(FormattedMessage):
             ))
 
     def format_content(self):
-        for x in iter(self.content):
+        for x in iter(self.content()):
             yield x
 
     @staticmethod
@@ -146,7 +146,7 @@ class ColorMessage(FormattedMessage):
         return '---'
 
     def show(self):
-        headers = self.request_headers()
+        headers = self.request_headers().headers
         if not headers.matches(self.args.with_headers):
             return False
         if self.args.without_headers and any(
@@ -209,8 +209,7 @@ class GrepLog(ModSecurityLog):
 
     def __init__(self, args):
         super(GrepLog, self).__init__(args, message_class=ColorMessage)
-
-        self.args = self.get_arg_parser().parse_args(args)
+        self.args = GrepLog.get_arg_parser().parse_args(args)
         if self.args.timestamp or self.args.timestamp_between:
             self.args.show_timestamp = True
         if self.args.timestamp:
@@ -224,6 +223,7 @@ class GrepLog(ModSecurityLog):
             if not self.args.show_headers:
                 self.args.show_headers = list()
             self.args.show_headers.extend(self.args.with_headers.keys())
+
         self.args.with_parameters = split_to_dict(self.args.with_parameters, '=')
 
     @staticmethod
